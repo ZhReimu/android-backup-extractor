@@ -20,6 +20,8 @@ import java.nio.file.Paths;
 import java.security.Key;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.zip.Deflater;
+import java.util.zip.DeflaterOutputStream;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
 
@@ -79,8 +81,24 @@ public abstract class BaseBackupHandler {
      * @param backupFilename 打包后的文件名
      * @param password       加密密码
      * @param isKitKat       是否为 Android 4.4
+     * @param compressing    是否压缩
      */
-    public abstract void packTar(String tarFilename, String backupFilename, String password, boolean isKitKat);
+    public void packTar(String tarFilename, String backupFilename, String password, boolean isKitKat, boolean compressing, boolean isMIUI) {
+        try (OutputStream ofStream = getOutputStream(backupFilename)) {
+            packTar(tarFilename, backupFilename, PackBackupFileMeta.of(password, isKitKat, compressing, isMIUI, ofStream));
+        } catch (Throwable t) {
+            throw new RuntimeException(t.getMessage(), t);
+        }
+    }
+
+    /**
+     * 将文件打包成备份文件
+     *
+     * @param tarFilename    要打包的文件名
+     * @param backupFilename 打包后的文件名
+     * @param meta           打包参数
+     */
+    protected abstract void packTar(String tarFilename, String backupFilename, PackBackupFileMeta meta);
 
     protected static InputStream getInputStream(String filename) throws IOException {
         if (filename.equals("-")) {
@@ -99,19 +117,18 @@ public abstract class BaseBackupHandler {
         return new ByteArrayOutputStream();
     }
 
-    protected byte[] randomBytes(int bits) {
+    protected static byte[] randomBytes(int bits) {
         byte[] array = new byte[bits / 8];
         random.nextBytes(array);
         return array;
     }
 
-    protected OutputStream emitAesBackupHeader(StringBuilder buf, OutputStream os, String encryptionPassword, boolean useUtf8) throws Exception {
+    protected static OutputStream emitAesBackupHeader(StringBuilder buf, OutputStream os, String encryptionPassword, boolean useUtf8) throws Exception {
         // User key will be used to encrypt the master key.
         byte[] newUserSalt = randomBytes(PBKDF2_SALT_SIZE);
         SecretKey userKey = buildPasswordKey(encryptionPassword, newUserSalt, PBKDF2_HASH_ROUNDS, useUtf8);
         // the master key is random for each backup
-        byte[] masterPw = new byte[MASTER_KEY_SIZE / 8];
-        random.nextBytes(masterPw);
+        byte[] masterPw = randomBytes(MASTER_KEY_SIZE);
         byte[] checksumSalt = randomBytes(PBKDF2_SALT_SIZE);
         // primary encryption of the datastream with the random key
         Cipher c = Cipher.getInstance(ENCRYPTION_MECHANISM);
@@ -338,6 +355,26 @@ public abstract class BaseBackupHandler {
         return null;
     }
 
+    protected static OutputStream getOutputStream(PackBackupFileMeta meta, StringBuilder headerBuf) throws Exception {
+        OutputStream finalOutput = meta.getOfStream();
+        // Set up the encryption stage if appropriate, and emit the correct
+        // header
+        if (meta.isEncrypting()) {
+            finalOutput = emitAesBackupHeader(headerBuf, finalOutput, meta.getPassword(), meta.isKitKat());
+        } else {
+            headerBuf.append("none\n");
+        }
+        meta.getOfStream().write(headerBuf.toString().getBytes(StandardCharsets.UTF_8));
+        // Set up the compression stage feeding into the encryption stage
+        // (if any)
+        if (meta.isCompressing()) {
+            Deflater deflater = new Deflater(Deflater.BEST_COMPRESSION);
+            // requires Java 7
+            finalOutput = new DeflaterOutputStream(finalOutput, deflater, true);
+        }
+        return finalOutput;
+    }
+
     protected static class BackupFileMeta {
         private InputStream rawInStream;
         private CipherInputStream cipherStream;
@@ -436,6 +473,58 @@ public abstract class BaseBackupHandler {
 
         public Inflater getInf() {
             return inf;
+        }
+    }
+
+    protected static class PackBackupFileMeta {
+        private String password;
+        private boolean isKitKat;
+        private boolean compressing;
+        private OutputStream ofStream;
+        private boolean encrypting;
+        private boolean isMIUI;
+        private OutputStream outputStream;
+
+        public static PackBackupFileMeta of(String password, boolean isKitKat, boolean compressing, boolean isMIUI, OutputStream ofStream) {
+            PackBackupFileMeta result = new PackBackupFileMeta();
+            result.password = password;
+            result.isKitKat = isKitKat;
+            result.compressing = compressing;
+            result.ofStream = ofStream;
+            result.encrypting = password != null && !password.isEmpty();
+            result.isMIUI = isMIUI;
+            return result;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public boolean isKitKat() {
+            return isKitKat;
+        }
+
+        public boolean isCompressing() {
+            return compressing;
+        }
+
+        public OutputStream getOfStream() {
+            return ofStream;
+        }
+
+        public boolean isEncrypting() {
+            return encrypting;
+        }
+
+        public boolean isMIUI() {
+            return isMIUI;
+        }
+
+        public OutputStream getOutputStream(StringBuilder headerBuf) throws Exception {
+            if (outputStream == null) {
+                outputStream = BaseBackupHandler.getOutputStream(this, headerBuf);
+            }
+            return outputStream;
         }
     }
 

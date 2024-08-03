@@ -13,6 +13,6 @@ public class AndroidBackup {
     }
 
     public static void packTar(String tarFilename, String backupFilename, String password, boolean isKitKat) {
-        ANDROID_BACKUP_HANDLER.packTar(tarFilename, backupFilename, password, isKitKat);
+        ANDROID_BACKUP_HANDLER.packTar(tarFilename, backupFilename, password, isKitKat, true, false);
     }
 }

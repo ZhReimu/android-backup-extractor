@@ -1,11 +1,7 @@
 package org.nick.abe.handler;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.zip.Deflater;
-import java.util.zip.DeflaterOutputStream;
 
 public class AndroidBackupHandler extends BaseBackupHandler {
 
@@ -43,37 +39,27 @@ public class AndroidBackupHandler extends BaseBackupHandler {
         }
     }
 
+    /**
+     * 将文件打包成备份文件
+     *
+     * @param tarFilename    要打包的文件名
+     * @param backupFilename 打包后的文件名
+     * @param meta           打包参数
+     */
     @Override
-    public void packTar(String tarFilename, String backupFilename, String password, boolean isKitKat) {
-        boolean encrypting = password != null && !password.isEmpty();
-        boolean compressing = true;
-        StringBuilder headerbuf = new StringBuilder(1024);
-        headerbuf.append(BACKUP_FILE_HEADER_MAGIC);
+    protected void packTar(String tarFilename, String backupFilename, PackBackupFileMeta meta) {
+        StringBuilder headerBuf = new StringBuilder(1024);
+        // TODO: 添加 MIUI 文件头
+        //MIUI BACKUP
+        //2
+        //<包名> <app 名称>
+        //-1
+        //0
+        headerBuf.append(BACKUP_FILE_HEADER_MAGIC);
         // integer, no trailing \n
-        headerbuf.append(isKitKat ? BACKUP_FILE_V2 : BACKUP_FILE_V1);
-        headerbuf.append(compressing ? "\n1\n" : "\n0\n");
-        OutputStream out = null;
-        try {
-            InputStream in = getInputStream(tarFilename);
-            OutputStream ofstream = getOutputStream(backupFilename);
-            OutputStream finalOutput = ofstream;
-            // Set up the encryption stage if appropriate, and emit the correct
-            // header
-            if (encrypting) {
-                finalOutput = emitAesBackupHeader(headerbuf, finalOutput, password, isKitKat);
-            } else {
-                headerbuf.append("none\n");
-            }
-            byte[] header = headerbuf.toString().getBytes(StandardCharsets.UTF_8);
-            ofstream.write(header);
-            // Set up the compression stage feeding into the encryption stage
-            // (if any)
-            if (compressing) {
-                Deflater deflater = new Deflater(Deflater.BEST_COMPRESSION);
-                // requires Java 7
-                finalOutput = new DeflaterOutputStream(finalOutput, deflater, true);
-            }
-            out = finalOutput;
+        headerBuf.append(meta.isKitKat() ? BACKUP_FILE_V2 : BACKUP_FILE_V1);
+        headerBuf.append(meta.isCompressing() ? "\n1\n" : "\n0\n");
+        try (InputStream in = getInputStream(tarFilename); OutputStream out = meta.getOutputStream(headerBuf)) {
             byte[] buff = new byte[10 * 1024];
             int read;
             int totalRead = 0;
@@ -87,14 +73,6 @@ public class AndroidBackupHandler extends BaseBackupHandler {
             logger.info("packTar: {} bytes written to {}.", totalRead, backupFilename);
         } catch (Exception e) {
             throw new RuntimeException(e);
-        } finally {
-            if (out != null) {
-                try {
-                    out.flush();
-                    out.close();
-                } catch (IOException ignored) {
-                }
-            }
         }
     }
 
