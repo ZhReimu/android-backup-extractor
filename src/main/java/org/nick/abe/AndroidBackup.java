@@ -27,7 +27,11 @@ import java.util.zip.InflaterInputStream;
 public class AndroidBackup {
 
     private static final int BACKUP_MANIFEST_VERSION = 1;
+
     private static final String BACKUP_FILE_HEADER_MAGIC = "ANDROID BACKUP\n";
+
+    private static final String MIUI_BACKUP_FILE_HEADER = "MIUI BACKUP";
+
     private static final int BACKUP_FILE_V1 = 1;
     private static final int BACKUP_FILE_V2 = 2;
     private static final int BACKUP_FILE_V3 = 3;
@@ -35,6 +39,7 @@ public class AndroidBackup {
     private static final int BACKUP_FILE_V5 = 5;
 
     private static final String ENCRYPTION_MECHANISM = "AES/CBC/PKCS5Padding";
+
     private static final int PBKDF2_HASH_ROUNDS = 10000;
     private static final int PBKDF2_KEY_SIZE = 256; // bits
     private static final int MASTER_KEY_SIZE = 256; // bits
@@ -73,8 +78,10 @@ public class AndroidBackup {
             if (version < BACKUP_FILE_V1 || version > BACKUP_FILE_V5) {
                 throw new IllegalArgumentException("Don't know how to process version " + versionStr);
             }
-
             String compressed = readHeaderLine(rawInStream); // 3
+            if (!isDigit(compressed)) {
+                throw new IllegalArgumentException("Invalid param " + compressed);
+            }
             boolean isCompressed = Integer.parseInt(compressed) == 1;
             if (DEBUG) {
                 System.err.println("Compressed: " + compressed);
@@ -228,7 +235,7 @@ public class AndroidBackup {
                 }
             }
         } catch (Exception e) {
-            throw new RuntimeException(e.getMessage());
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 
@@ -408,7 +415,16 @@ public class AndroidBackup {
                 break; // consume and discard the newlines
             buffer.append((char) c);
         }
-        return buffer.toString();
+        // ignore miui backup header
+        String result = buffer.toString();
+        if (result.equals(MIUI_BACKUP_FILE_HEADER)) {
+            // skip next 5 \n
+            for (int i = 0; i < 4; i++) {
+                readHeaderLine(in);
+            }
+            result = readHeaderLine(in);
+        }
+        return result;
     }
 
     public static byte[] hexToByteArray(String digits) {
@@ -447,8 +463,7 @@ public class AndroidBackup {
         return checksum.getEncoded();
     }
 
-    public static SecretKey buildCharArrayKey(char[] pwArray, byte[] salt,
-                                              int rounds, boolean useUtf8) {
+    public static SecretKey buildCharArrayKey(char[] pwArray, byte[] salt, int rounds, boolean useUtf8) {
         // Original code from BackupManagerService
         // this produces different results when run with Sun/Oracale Java SE
         // which apparently treats password bytes as UTF-8 (16?)
@@ -471,8 +486,7 @@ public class AndroidBackup {
         return androidPBKDF2(pwArray, salt, rounds, useUtf8);
     }
 
-    public static SecretKey androidPBKDF2(char[] pwArray, byte[] salt,
-                                          int rounds, boolean useUtf8) {
+    public static SecretKey androidPBKDF2(char[] pwArray, byte[] salt, int rounds, boolean useUtf8) {
         PBEParametersGenerator generator = new PKCS5S2ParametersGenerator();
         // Android treats password bytes as ASCII, which is obviously
         // not the case when an AES key is used as a 'password'.
