@@ -1,15 +1,17 @@
-
 package org.nick.abe;
 
-import java.io.ByteArrayOutputStream;
-import java.io.Console;
-import java.io.DataOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import org.bouncycastle.crypto.PBEParametersGenerator;
+import org.bouncycastle.crypto.generators.PKCS5S2ParametersGenerator;
+import org.bouncycastle.crypto.params.KeyParameter;
+import org.bouncycastle.util.encoders.Hex;
+
+import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.CipherOutputStream;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -20,17 +22,6 @@ import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
-
-import javax.crypto.Cipher;
-import javax.crypto.CipherInputStream;
-import javax.crypto.CipherOutputStream;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.IvParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
-
-import org.bouncycastle.crypto.PBEParametersGenerator;
-import org.bouncycastle.crypto.generators.PKCS5S2ParametersGenerator;
-import org.bouncycastle.crypto.params.KeyParameter;
 
 // mostly lifted off com.android.server.BackupManagerService.java
 public class AndroidBackup {
@@ -57,8 +48,7 @@ public class AndroidBackup {
     private AndroidBackup() {
     }
 
-    public static void extractAsTar(String backupFilename, String filename,
-            String password) {
+    public static void extractAsTar(String backupFilename, String filename, String password) {
         try {
             InputStream rawInStream = getInputStream(backupFilename);
             CipherInputStream cipherStream = null;
@@ -76,10 +66,12 @@ public class AndroidBackup {
             if (DEBUG) {
                 System.err.println("Version: " + versionStr);
             }
+            if (!isDigit(versionStr)) {
+                throw new IllegalArgumentException("Invalid version: " + Hex.toHexString(versionStr.getBytes(StandardCharsets.UTF_8)));
+            }
             int version = Integer.parseInt(versionStr);
             if (version < BACKUP_FILE_V1 || version > BACKUP_FILE_V5) {
-                throw new IllegalArgumentException(
-                        "Don't know how to process version " + versionStr);
+                throw new IllegalArgumentException("Don't know how to process version " + versionStr);
             }
 
             String compressed = readHeaderLine(rawInStream); // 3
@@ -101,7 +93,7 @@ public class AndroidBackup {
                             "Please check that unlimited strength cryptography is available, see README.md for details");
                 }
 
-                if (password == null || "".equals(password)) {
+                if (password == null || password.isEmpty()) {
                     Console console = System.console();
                     if (console != null) {
                         System.err.println("This backup is encrypted, please provide the password");
@@ -236,13 +228,12 @@ public class AndroidBackup {
                 }
             }
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new RuntimeException(e.getMessage());
         }
     }
 
-    public static void packTar(String tarFilename, String backupFilename,
-            String password, boolean isKitKat) {
-        boolean encrypting = password != null && !"".equals(password);
+    public static void packTar(String tarFilename, String backupFilename, String password, boolean isKitKat) {
+        boolean encrypting = password != null && !password.isEmpty();
         boolean compressing = true;
 
         StringBuilder headerbuf = new StringBuilder(1024);
@@ -329,7 +320,7 @@ public class AndroidBackup {
     }
 
     private static OutputStream emitAesBackupHeader(StringBuilder headerbuf,
-            OutputStream ofstream, String encryptionPassword, boolean useUtf8) throws Exception {
+                                                    OutputStream ofstream, String encryptionPassword, boolean useUtf8) throws Exception {
         // User key will be used to encrypt the master key.
         byte[] newUserSalt = randomBytes(PBKDF2_SALT_SIZE);
         SecretKey userKey = buildPasswordKey(encryptionPassword, newUserSalt,
@@ -457,7 +448,7 @@ public class AndroidBackup {
     }
 
     public static SecretKey buildCharArrayKey(char[] pwArray, byte[] salt,
-            int rounds, boolean useUtf8) {
+                                              int rounds, boolean useUtf8) {
         // Original code from BackupManagerService
         // this produces different results when run with Sun/Oracale Java SE
         // which apparently treats password bytes as UTF-8 (16?)
@@ -481,7 +472,7 @@ public class AndroidBackup {
     }
 
     public static SecretKey androidPBKDF2(char[] pwArray, byte[] salt,
-            int rounds, boolean useUtf8) {
+                                          int rounds, boolean useUtf8) {
         PBEParametersGenerator generator = new PKCS5S2ParametersGenerator();
         // Android treats password bytes as ASCII, which is obviously
         // not the case when an AES key is used as a 'password'.
@@ -500,6 +491,13 @@ public class AndroidBackup {
 
     private static SecretKey buildPasswordKey(String pw, byte[] salt, int rounds, boolean useUtf8) {
         return buildCharArrayKey(pw.toCharArray(), salt, rounds, useUtf8);
+    }
+
+    private static boolean isDigit(String s) {
+        if (s == null || s.isBlank()) {
+            return false;
+        }
+        return s.chars().allMatch(Character::isDigit);
     }
 
 }
